@@ -16,7 +16,7 @@ Start before you are ready, learn from your mistakes, and improve every single d
 
 # 1. ANALYZE TRANSCRIPT
 
-def analyze_transcript(text):
+def analyze_transcript(text, min_words=8, max_words=25):
 
     total_words = len(text.split())
     character_count = len(text)
@@ -32,7 +32,7 @@ def analyze_transcript(text):
             sentence_count += 1
             word_count = len(clean_sentence.split())
 
-            if 8 <= word_count <= 25:
+            if min_words <= word_count <= max_words:
 
                 score = calculate_score(clean_sentence)
 
