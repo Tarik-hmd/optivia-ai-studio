@@ -1,10 +1,13 @@
+import string
+
+
 def calculate_score(sentence):
     words = sentence.lower().split()
-    clean_words = []
+    clean_words = [
+        word.strip(string.punctuation)
+        for word in words
+]
 
-    for word in words:
-        clean_word = word.strip("!?.,")
-        clean_words.append(clean_word)
     score = 0
 
     keywords = {
@@ -18,5 +21,8 @@ def calculate_score(sentence):
     for keyword, points in keywords.items():
         if keyword in clean_words:
             score += points
+
+        if sentence.strip().endswith("?"):
+            score =+ 2
 
     return score
