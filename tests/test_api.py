@@ -1,9 +1,12 @@
 
 from fastapi.testclient import TestClient
 from api import app
+import pytest
+from unittest.mock import MagicMock, patch
+
+
 
 client = TestClient(app)
-
 
 def test_reject_invalid_extension():
     response = client.post(
@@ -296,3 +299,292 @@ def test_download_invalid_filename():
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid filename"
+
+
+from unittest.mock import MagicMock, patch
+from api import select_video_clips
+
+
+def test_select_video_clips_ai_mode():
+    windows = [
+        [
+            {
+                "text": "This is an interesting moment",
+                "start": 0,
+                "end": 20
+            }
+        ]
+    ]
+
+    fake_client = MagicMock()
+
+    expected_clips = [
+        {
+            "text": "This is an interesting moment",
+            "start": 0,
+            "end": 20,
+            "duration": 20,
+            "score": 19
+        }
+    ]
+
+    with patch("api.build_ai_clips") as mock_ai:
+        mock_ai.return_value = expected_clips
+
+        result = select_video_clips(
+            windows,
+            mode="ai",
+            client=fake_client,
+            top_n=3
+        )
+
+        assert result == expected_clips
+
+        mock_ai.assert_called_once_with(
+            windows,
+            client=fake_client,
+            min_duration=10,
+            max_duration=60,
+            top_n=3
+        )
+
+
+import pytest
+
+
+def test_select_video_clips_ai_requires_client():
+    windows = [
+        [
+            {
+                "text": "Interesting video moment",
+                "start": 0,
+                "end": 20
+            }
+        ]
+    ]
+
+    with patch("api.build_ai_clips") as mock_ai:
+        with pytest.raises(
+            ValueError,
+            match="AI mode requires an LLM client"
+        ):
+            select_video_clips(
+                windows,
+                mode="ai",
+                client=None
+            )
+
+        mock_ai.assert_not_called()
+
+
+def test_process_video_rejects_invalid_mode():
+    response = client.post(
+        "/process-video",
+        data={"mode": "unknown"},
+        files={
+            "file": ("video.mp4", b"fake video", "video/mp4")
+        }
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Mode must be 'keywords' or 'ai'"
+    )
+
+
+def test_process_video_ai_not_configured():
+    response = client.post(
+        "/process-video",
+        data={"mode": "ai"},
+        files={
+            "file": ("video.mp4", b"fake video", "video/mp4")
+        }
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "AI mode is not configured yet"
+    )
+
+def test_get_ai_client_without_api_key(monkeypatch):
+    from api import get_ai_client
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    assert get_ai_client() is None
+
+
+def test_get_ai_client_with_api_key(monkeypatch):
+    from api import get_ai_client
+
+    fake_client = MagicMock()
+
+    # Simulate an API key
+    monkeypatch.setenv(
+        "OPENAI_API_KEY",
+        "sk-test-fake-key"
+    )
+
+    # Mock OpenAI client creation
+    with patch("api.create_llm_client") as mock_create:
+        mock_create.return_value = fake_client
+
+        result = get_ai_client()
+
+        assert result is fake_client
+
+        mock_create.assert_called_once_with(
+            "sk-test-fake-key"
+        )
+
+
+def test_process_video_ai_mode_uses_ai_client(monkeypatch):
+    import api
+
+    fake_client = MagicMock()
+
+    monkeypatch.setattr(
+        api,
+        "get_ai_client",
+        lambda: fake_client
+    )
+
+    monkeypatch.setattr(
+        api,
+        "validate_video",
+        lambda path: True
+    )
+
+    monkeypatch.setattr(
+        api,
+        "transcribe_audio",
+        lambda path: {
+            "segments": [
+                {
+                    "text": "An interesting moment",
+                    "start": 0,
+                    "end": 20
+                }
+            ]
+        }
+    )
+
+    with patch("api.select_video_clips") as mock_select:
+        mock_select.return_value = []
+
+        response = client.post(
+            "/process-video",
+            data={"mode": "ai"},
+            files={
+                "file": (
+                    "test.mp4",
+                    b"fake video",
+                    "video/mp4"
+                )
+            }
+        )
+
+        assert response.status_code == 200
+
+        assert response.json()["clips"] == []
+
+        mock_select.assert_called_once()
+
+        args, kwargs = mock_select.call_args
+
+        assert kwargs["mode"] == "ai"
+        assert kwargs["client"] is fake_client
+        assert kwargs["top_n"] == 5
+
+
+def test_process_video_ai_exports_selected_clip(
+    monkeypatch,
+    tmp_path
+):
+    import api
+    from pathlib import Path
+
+    monkeypatch.chdir(tmp_path)
+
+    fake_client = MagicMock()
+
+    monkeypatch.setattr(
+        api, "get_ai_client",
+        lambda: fake_client
+    )
+
+    monkeypatch.setattr(
+        api, "validate_video",
+        lambda path: True
+    )
+
+    monkeypatch.setattr(
+        api, "transcribe_audio",
+        lambda path: {
+            "segments": [
+                {
+                    "text": "A powerful lesson about success",
+                    "start": 0,
+                    "end": 20
+                }
+            ]
+        }
+    )
+
+    selected_clip = {
+        "text": "A powerful lesson about success",
+        "start": 0,
+        "end": 20,
+        "duration": 20,
+        "score": 19
+    }
+
+    def fake_export(video_path, start, end, output_path):
+        Path(output_path).write_bytes(b"vertical video")
+
+    def fake_subtitles(video_path, subtitle_path, output_path):
+        Path(output_path).write_bytes(b"final video")
+
+    def fake_srt(segments, subtitle_path):
+        Path(subtitle_path).write_text("fake subtitles")
+
+    monkeypatch.setattr(
+        api, "export_vertical_clip", fake_export
+    )
+    monkeypatch.setattr(
+        api, "add_subtitles", fake_subtitles
+    )
+    monkeypatch.setattr(
+        api, "generate_srt", fake_srt
+    )
+
+    with patch("api.select_video_clips") as mock_select:
+        mock_select.return_value = [selected_clip]
+
+        response = client.post(
+            "/process-video",
+            data={"mode": "ai"},
+            files={
+                "file": (
+                    "test.mp4",
+                    b"fake video",
+                    "video/mp4"
+                )
+            }
+        )
+
+    assert response.status_code == 200
+
+    result = response.json()
+
+    assert len(result["clips"]) == 1
+    assert result["clips"][0]["score"] == 19
+
+    final_path = Path(result["clips"][0]["file"])
+
+    assert final_path.exists()
+    assert final_path.read_bytes() == b"final video"
+
+    assert result["clips"][0]["download_url"].startswith(
+        "/download/"
+    )

@@ -16,7 +16,10 @@ from uuid import uuid4
 from video_engine import validate_video
 import subprocess
 import shutil
-
+from clip_engine import build_ai_clips
+from fastapi import Form
+import os
+from llm_client import create_llm_client
 
 app = FastAPI()
 
@@ -124,9 +127,29 @@ async def transcribe_uploaded_audio(file: UploadFile = File(...)):
 
 
 @app.post("/process-video")
-async def process_video(file: UploadFile = File(...)):
+async def process_video(file: UploadFile = File(...), mode: str = Form("keywords")):
     temp_path = None
     output_dir = None
+    if mode not in ("keywords", "ai"):
+      await file.close()
+      raise HTTPException(
+        status_code=422,
+        detail="Mode must be 'keywords' or 'ai'"
+    )
+
+    ai_client = None 
+    
+    
+    if mode == "ai":
+      ai_client = get_ai_client()
+
+      if ai_client is None:
+         await file.close()
+         raise HTTPException(
+         status_code=503,
+         detail="AI mode is not configured yet"
+    )
+
     if not file.filename or not file.filename.lower().endswith(".mp4"):
         await file.close()
         raise HTTPException(
@@ -183,10 +206,10 @@ async def process_video(file: UploadFile = File(...)):
         )
 
         # 4. Select best clips
-        clips = build_clips(
+        clips = select_video_clips(
             windows,
-            min_duration=10,
-            max_duration=60,
+            mode=mode,
+            client=ai_client,
             top_n=5
         )
 
@@ -258,8 +281,7 @@ async def process_video(file: UploadFile = File(...)):
             "transcription": transcription,
             "clips": exported_clips
         }
-        
-   
+
     except subprocess.CalledProcessError as error:
         if output_dir is not None:
             shutil.rmtree(output_dir, ignore_errors=True)
@@ -291,6 +313,39 @@ async def process_video(file: UploadFile = File(...)):
             os.remove(temp_path)
 
         await file.close()
+
+
+def select_video_clips(
+    windows,
+    mode="keywords",
+    client=None,
+    top_n=5
+):
+    if mode == "keywords":
+        return build_clips(
+            windows,
+            min_duration=10,
+            max_duration=60,
+            top_n=top_n
+        )
+
+    if mode == "ai":
+        if client is None:
+            raise ValueError(
+                "AI mode requires an LLM client"
+            )
+
+        return build_ai_clips(
+            windows,
+            client=client,
+            min_duration=10,
+            max_duration=60,
+            top_n=top_n
+        )
+
+    raise ValueError(
+        f"Unsupported selection mode: {mode}"
+    )
 
 
 EXPORT_DIR = Path("exports").resolve()
@@ -330,4 +385,12 @@ def download_clip(job_id: str, filename: str):
         media_type="video/mp4",
         filename=filename
     )
+
+def get_ai_client():
+    api_key = os.getenv("OPENAI_API_KEY")
+
+    if not api_key:
+        return None
+
+    return create_llm_client(api_key)
 

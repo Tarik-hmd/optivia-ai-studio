@@ -64,7 +64,8 @@ def build_clips(
     groups,
     min_duration=15,
     max_duration=60,
-    top_n=5
+    top_n=5,
+    remove_overlaps=True
 ):
     clips = []
 
@@ -103,11 +104,13 @@ def build_clips(
         key=lambda clip: clip["score"],
         reverse=True
     )
-    unique_clips = remove_overlapping_clips(ranked_clips)
+    if remove_overlaps:
+        ranked_clips = remove_overlapping_clips(ranked_clips)
 
     if top_n is None:
-        return unique_clips
-    return unique_clips[:top_n]
+        return ranked_clips
+    
+    return ranked_clips[:top_n]
 
 def sliding_windows(segments, window_size=3):
     windows = []
@@ -180,3 +183,64 @@ def remove_overlapping_clips(clips, max_overlap_ratio=0.3):
 
     return selected_clips
 
+
+def build_ai_clips(
+    groups,
+    client,
+    min_duration=15,
+    max_duration=60,
+    top_n=5,
+    max_candidates=20
+):
+    from llm_client import evaluate_candidates
+
+    if max_candidates < 1:
+        raise ValueError("max_candidates must be at least 1")
+
+    # Generate candidates using keyword scoring
+    candidates = build_clips(
+        groups,
+        min_duration=min_duration,
+        max_duration=max_duration,
+        top_n=None,
+        remove_overlaps=False
+    )
+
+    # Limit the number of candidates sent to the AI
+    candidates = candidates[:max_candidates]
+
+    # Evaluate the selected candidates using AI
+    # Evaluate all preselected candidates
+    evaluated_clips = evaluate_candidates(
+        client,
+        candidates,
+        top_n=None
+)
+
+# Remove overlaps AFTER AI scoring
+    return select_final_clips(
+        evaluated_clips,
+        top_n=top_n
+)
+
+
+
+def select_final_clips(evaluated_clips, top_n=5):
+    """
+    Select the highest-rated clips while avoiding
+    excessive temporal overlap.
+    """
+    ranked_clips = sorted(
+        evaluated_clips,
+        key=lambda clip: clip["score"],
+        reverse=True
+    )
+
+    unique_clips = remove_overlapping_clips(
+        ranked_clips
+    )
+
+    if top_n is None:
+        return unique_clips
+
+    return unique_clips[:top_n]
