@@ -588,3 +588,239 @@ def test_process_video_ai_exports_selected_clip(
     assert result["clips"][0]["download_url"].startswith(
         "/download/"
     )
+from openai import RateLimitError
+import httpx
+
+
+def test_ai_quota_error_returns_503(monkeypatch):
+    import api
+
+    fake_request = httpx.Request(
+        "POST",
+        "https://api.openai.com/v1/responses"
+    )
+
+    fake_response = httpx.Response(
+        429,
+        request=fake_request
+    )
+
+    def raise_quota_error(*args, **kwargs):
+        raise RateLimitError(
+            "You have no credits remaining",
+            response=fake_response,
+            body={"error": {"code": "insufficient_quota"}}
+        )
+
+    monkeypatch.setattr(
+        api,
+        "get_ai_client",
+        lambda: MagicMock()
+    )
+
+    monkeypatch.setattr(
+        api,
+        "validate_video",
+        lambda path: True
+    )
+
+    monkeypatch.setattr(
+        api,
+        "transcribe_audio",
+        lambda path: {"segments": []}
+    )
+
+    monkeypatch.setattr(
+        api,
+        "select_video_clips",
+        raise_quota_error
+    )
+
+    response = client.post(
+        "/process-video",
+        data={"mode": "ai"},
+        files={
+            "file": (
+                "test.mp4",
+                b"fake video",
+                "video/mp4"
+            )
+        }
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "AI service temporarily unavailable"
+    )
+
+
+
+def test_keywords_mode_does_not_initialize_ai(monkeypatch):
+    import api
+
+    def forbidden_ai_call():
+        raise AssertionError(
+            "OpenAI must not be called in keywords mode"
+        )
+
+    monkeypatch.setattr(
+        api,
+        "get_ai_client",
+        forbidden_ai_call
+    )
+
+    monkeypatch.setattr(
+        api,
+        "validate_video",
+        lambda path: True
+    )
+
+    monkeypatch.setattr(
+        api,
+        "transcribe_audio",
+        lambda path: {"segments": []}
+    )
+
+    monkeypatch.setattr(
+        api,
+        "select_video_clips",
+        lambda *args, **kwargs: []
+    )
+
+    response = client.post(
+        "/process-video",
+        data={"mode": "keywords"},
+        files={
+            "file": (
+                "test.mp4",
+                b"fake video",
+                "video/mp4"
+            )
+        }
+    )
+
+    assert response.status_code == 200
+    assert response.json()["clips"] == []
+
+
+def test_ai_rate_limit_returns_429(monkeypatch):
+    import api
+    import httpx
+    from openai import RateLimitError
+
+    fake_request = httpx.Request(
+        "POST",
+        "https://api.openai.com/v1/responses"
+    )
+
+    fake_response = httpx.Response(
+        429,
+        request=fake_request
+    )
+
+    def raise_rate_limit(*args, **kwargs):
+        raise RateLimitError(
+            "Rate limit exceeded",
+            response=fake_response,
+            body={
+                "error": {
+                    "code": "rate_limit_exceeded"
+                }
+            }
+        )
+
+    monkeypatch.setattr(
+        api, "get_ai_client",
+        lambda: MagicMock()
+    )
+
+    monkeypatch.setattr(
+        api, "validate_video",
+        lambda path: True
+    )
+
+    monkeypatch.setattr(
+        api, "transcribe_audio",
+        lambda path: {"segments": []}
+    )
+
+    monkeypatch.setattr(
+        api, "select_video_clips",
+        raise_rate_limit
+    )
+
+    response = client.post(
+        "/process-video",
+        data={"mode": "ai"},
+        files={
+            "file": (
+                "test.mp4",
+                b"fake video",
+                "video/mp4"
+            )
+        }
+    )
+
+    assert response.status_code == 429
+    assert response.json()["detail"] == (
+        "AI rate limit exceeded"
+    )
+
+def test_ai_server_error_returns_503(monkeypatch):
+    import api
+    import httpx
+    from openai import InternalServerError
+
+    request = httpx.Request(
+        "POST",
+        "https://api.openai.com/v1/responses"
+    )
+
+    response = httpx.Response(
+        500,
+        request=request
+    )
+
+    def raise_server_error(*args, **kwargs):
+        raise InternalServerError(
+            "OpenAI internal server error",
+            response=response,
+            body={"error": {"message": "Internal error"}}
+        )
+
+    monkeypatch.setattr(
+        api, "get_ai_client",
+        lambda: MagicMock()
+    )
+
+    monkeypatch.setattr(
+        api, "validate_video",
+        lambda path: True
+    )
+
+    monkeypatch.setattr(
+        api, "transcribe_audio",
+        lambda path: {"segments": []}
+    )
+
+    monkeypatch.setattr(
+        api, "select_video_clips",
+        raise_server_error
+    )
+
+    result = client.post(
+        "/process-video",
+        data={"mode": "ai"},
+        files={
+            "file": (
+                "test.mp4",
+                b"fake video",
+                "video/mp4"
+            )
+        }
+    )
+
+    assert result.status_code == 503
+    assert result.json()["detail"] == (
+        "AI provider temporarily unavailable"
+    )

@@ -20,6 +20,7 @@ from clip_engine import build_ai_clips
 from fastapi import Form
 import os
 from llm_client import create_llm_client
+from openai import RateLimitError, InternalServerError
 
 app = FastAPI()
 
@@ -293,6 +294,38 @@ async def process_video(file: UploadFile = File(...), mode: str = Form("keywords
             detail="Video processing failed during FFmpeg execution"
         ) from error
 
+    except InternalServerError:
+        if output_dir is not None:
+            shutil.rmtree(output_dir, ignore_errors=True)
+
+        raise HTTPException(
+            status_code=503,
+            detail="AI provider temporarily unavailable"
+        )
+
+    except RateLimitError as e:
+        if output_dir is not None:
+            shutil.rmtree(output_dir, ignore_errors=True)
+
+        error_code = None
+
+        if isinstance(e.body, dict):
+            error_code = e.body.get("code")
+
+            if error_code is None:
+                error_code = e.body.get("error", {}).get("code")
+
+        if error_code == "insufficient_quota":
+            raise HTTPException(
+                status_code=503,
+                detail="AI service temporarily unavailable"
+            )
+
+        raise HTTPException(
+            status_code=429,
+            detail="AI rate limit exceeded"
+        )
+
     except Exception as error:
         if output_dir is not None:
             shutil.rmtree(output_dir, ignore_errors=True)
@@ -393,4 +426,3 @@ def get_ai_client():
         return None
 
     return create_llm_client(api_key)
-
