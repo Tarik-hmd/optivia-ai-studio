@@ -1,4 +1,6 @@
 from scoring import calculate_score
+from semantic_scoring import rank_clips
+
 
 def generate_clips(segments, min_words=3, max_words=100):
     clips = []
@@ -7,12 +9,7 @@ def generate_clips(segments, min_words=3, max_words=100):
         text = segment["text"]
         word_count = len(text.split())
 
-        print("SEGMENT:", text)
-        print("WORDS:", word_count, "LIMITS:", min_words, max_words)
-
         if min_words <= word_count <= max_words:
-            score = calculate_score(text)
-
             clip = {
                 "text": text,
                 "start": segment["start"],
@@ -21,17 +18,12 @@ def generate_clips(segments, min_words=3, max_words=100):
                     segment["end"] - segment["start"], 2
                 ),
                 "word_count": word_count,
-                "score": score
+                "score": calculate_score(text)
             }
+
             clips.append(clip)
 
-        ranked_clips = sorted(
-            clips,
-            key=lambda clip: clip["score"],
-            reverse=True
-   )
-
-    return ranked_clips
+    return rank_clips(clips, top_n=None)
 
 
 def group_segments(segments, max_duration=60):
@@ -99,11 +91,7 @@ def build_clips(
         clips.append(clip)
 
     # Rank clips from highest to lowest score
-    ranked_clips = sorted(
-        clips,
-        key=lambda clip: clip["score"],
-        reverse=True
-    )
+    ranked_clips = rank_clips(clips, top_n=None)
     if remove_overlaps:
         ranked_clips = remove_overlapping_clips(ranked_clips)
 
@@ -225,15 +213,15 @@ def build_ai_clips(
 
 
 
+
 def select_final_clips(evaluated_clips, top_n=5):
     """
     Select the highest-rated clips while avoiding
     excessive temporal overlap.
     """
-    ranked_clips = sorted(
+    ranked_clips = rank_clips(
         evaluated_clips,
-        key=lambda clip: clip["score"],
-        reverse=True
+        top_n=None
     )
 
     unique_clips = remove_overlapping_clips(

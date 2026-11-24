@@ -51,3 +51,23 @@ def test_rank_clips():
     assert len(ranked) == 2
     assert ranked[0]["id"] == 2
     assert ranked[1]["id"] == 3
+
+
+def test_rank_clips_prefers_shorter_duration_on_tie():
+    clips = [
+        {
+            "text": "Long clip",
+            "score": 8,
+            "duration": 60,
+        },
+        {
+            "text": "Short clip",
+            "score": 8,
+            "duration": 15,
+        },
+    ]
+
+    ranked = rank_clips(clips, top_n=2)
+
+    assert ranked[0]["text"] == "Short clip"
+    assert ranked[1]["text"] == "Long clip"

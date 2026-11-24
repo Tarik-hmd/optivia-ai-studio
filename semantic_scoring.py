@@ -12,10 +12,13 @@ def calculate_semantic_score(hook, clarity, emotion, value):
     return sum(scores)
 
 
+
 def rank_clips(clips, top_n=5):
     return sorted(
         clips,
-        key=lambda clip: clip["score"],
-        reverse=True
+        key=lambda clip: (
+            -clip["score"],
+            clip.get("duration", float("inf"))
+        )
     )[:top_n]
 

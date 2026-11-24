@@ -24,6 +24,14 @@ from openai import RateLimitError, InternalServerError
 
 app = FastAPI()
 
+@app.get("/health")
+def health_check():
+    return {
+        "status": "ok",
+        "service": "Optivia AI Studio",
+        "version": "1.0.0"
+    }
+
 MAX_UPLOAD_SIZE = 500 * 1024 * 1024
 
 app.add_middleware(
