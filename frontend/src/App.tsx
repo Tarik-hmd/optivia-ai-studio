@@ -1,4 +1,3 @@
-
 import { useEffect, useRef, useState } from 'react'
 import {
   LayoutDashboard,
@@ -17,9 +16,12 @@ import {
   X,
   Menu,
   Cpu,
+  Trash2,
 } from 'lucide-react'
 import { motion } from 'motion/react'
 import axios from 'axios'
+import Landing from './Landing'
+import Editor from './Editor'
 
 import {
   checkHealth,
@@ -30,6 +32,7 @@ import {
 import type {
   Clip,
   ProcessingMode,
+  SourceLanguage,
   ProcessingResult,
 } from './services/api'
 
@@ -40,7 +43,19 @@ interface Project {
   result: ProcessingResult
 }
 
+const STORAGE_KEY = 'optivia.projects.v1'
+
+function loadProjects(): Project[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
+    return Array.isArray(value) ? value.filter(p => p && typeof p.name === 'string' && typeof p.result?.job_id === 'string' && Array.isArray(p.result?.clips)) : []
+  } catch { return [] }
+}
+
 function App() {
+  const [studio, setStudio] = useState(() => window.location.hash === '#studio')
+  const [sort, setSort] = useState('score')
+  const [search, setSearch] = useState('')
   const [page, setPage] = useState<Page>('Overview')
   const [online, setOnline] = useState(false)
   const [file, setFile] = useState<File | null>(null)
@@ -50,9 +65,19 @@ function App() {
   const [error, setError] = useState('')
   const [dragging, setDragging] = useState(false)
   const [mobileMenu, setMobileMenu] = useState(false)
-  const [projects, setProjects] = useState<Project[]>([])
+  const [projects, setProjects] = useState<Project[]>(loadProjects)
+  const [projectFilter, setProjectFilter] = useState('all')
+  const [language, setLanguage] = useState<SourceLanguage>('auto')
+  const [preview, setPreview] = useState('')
+  const [storageError, setStorageError] = useState('')
   const [selectedClip, setSelectedClip] =
     useState<Clip | null>(null)
+
+  useEffect(() => {
+    const sync = () => setStudio(window.location.hash === '#studio')
+    window.addEventListener('hashchange', sync)
+    return () => window.removeEventListener('hashchange', sync)
+  }, [])
 
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -66,6 +91,29 @@ function App() {
 
     return () => clearInterval(interval)
   }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(projects))
+      setStorageError('')
+    } catch { setStorageError('Project history could not be saved on this device.') }
+  }, [projects])
+
+  useEffect(() => {
+    if (!file) { setPreview(''); return }
+    const url = URL.createObjectURL(file)
+    setPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [file])
+
+  function removeProject(id: string) {
+    if (!window.confirm('Remove this project from your local history?')) return
+    setProjects(previous => previous.filter(p => p.result.job_id !== id))
+    setProjectFilter('all')
+    setSelectedClip(null)
+  }
+
+  const visibleClips = projects.filter(p => projectFilter === 'all' || p.result.job_id === projectFilter).flatMap(p => p.result.clips).filter(c => c.text.toLowerCase().includes(search.toLowerCase())).sort((a,b) => sort === 'duration' ? b.duration-a.duration : sort === 'time' ? a.start-b.start : b.score-a.score)
 
   const allClips = projects.flatMap(
     project => project.result.clips
@@ -99,14 +147,16 @@ function App() {
     setError('')
 
     try {
-      const result = await processVideo(file, mode)
+      const result = await processVideo(file, mode, language)
 
       setProjects(previous => [
-        { name: file.name, result },
+        { name: file.name, result: { ...result, transcription: { text: "", language: result.transcription.language } } },
         ...previous,
       ])
 
       setFile(null)
+      setProjectFilter(result.job_id)
+      setSearch('')
       setPage('My clips')
     } catch (err) {
       if (axios.isAxiosError(err)) {
@@ -130,6 +180,8 @@ function App() {
     { name: 'Projects' as const, icon: FolderOpen },
     { name: 'My clips' as const, icon: Film },
   ]
+
+  if (!studio) return <Landing onStart={() => { window.location.hash = 'studio'; setStudio(true) }} />
 
   return (
     <div className="min-h-screen bg-obsidian text-offwhite">
@@ -179,6 +231,7 @@ function App() {
               key={item.name}
               onClick={() => {
                 setPage(item.name)
+                if (item.name === 'My clips') { setProjectFilter('all'); setSearch('') }
                 setMobileMenu(false)
               }}
               className={`flex w-full items-center gap-3
@@ -195,6 +248,7 @@ function App() {
         </nav>
 
         <div className="mt-auto border-t border-steel pt-5">
+          <button className="mb-5 text-xs text-nardo hover:text-offwhite" onClick={() => { window.location.hash = 'home'; setStudio(false) }}>← Back to website</button>
           <div className="flex items-center gap-2 text-xs">
             <span className={`h-2 w-2 rounded-full ${
               online ? 'bg-emerald-400' : 'bg-red-400'
@@ -202,11 +256,12 @@ function App() {
             {online ? 'Engine online' : 'Engine offline'}
           </div>
           <p className="mt-3 text-[10px] tracking-widest text-muted">
-            OPTIVIA / VERSION 1.0
+            OPTIVIA / VERSION 2.0
           </p>
         </div>
       </aside>
 
+      {mobileMenu && <button aria-label="Close menu" onClick={() => setMobileMenu(false)} className="fixed inset-0 z-30 bg-black/60 md:hidden" />}
       {/* Main workspace */}
       <main className="min-h-screen md:ml-64">
 
@@ -229,12 +284,13 @@ function App() {
 
           <span className="rounded-full border border-steel
             px-3 py-1 text-xs text-nardo">
-            STUDIO V1
+            STUDIO V2
           </span>
         </header>
 
         <div className="mx-auto max-w-7xl p-6 lg:p-10">
 
+          {storageError && <p role="alert" className="mb-4 text-sm text-amber-300">{storageError}</p>}
           {error && (
             <div className="mb-6 flex items-center gap-3
               rounded-lg border border-red-900 bg-red-950/30
@@ -272,14 +328,17 @@ function App() {
 
               <h2 className="font-display text-4xl
                 font-semibold tracking-tight lg:text-6xl">
-                Create more.
-                <span className="block text-nardo">Edit less.</span>
+                What are we
+                <span className="block text-nardo">creating today?</span>
               </h2>
 
               <p className="mb-10 mt-4 text-sm text-muted">
                 Transform long-form content into powerful short videos.
               </p>
 
+              <div className="mb-6 flex items-center justify-between gap-3"><p className="eyebrow">01 / NEW PROJECT</p><span className="text-xs text-muted">MP4 · 500 MB max</span></div>
+              <div className="grid items-start gap-6 xl:grid-cols-[1.25fr_1fr]">
+              <div>
               {/* Upload area */}
               <div
                 onDragOver={event => {
@@ -339,9 +398,13 @@ function App() {
                 </button>
               </div>
 
+              {file && preview && <div className="mt-4 rounded-xl border border-steel bg-graphite p-4">
+                <div className="mb-3 flex items-center justify-between"><h3 className="font-semibold">Source preview</h3><button disabled={processing} onClick={() => setFile(null)} aria-label="Remove video"><X size={18}/></button></div>
+                <video key={preview} src={preview} controls preload="metadata" className="mx-auto max-h-80 w-full rounded-lg bg-black object-contain" />
+              </div>}
+              </div>
               {/* Generation settings */}
-              <div className="mt-6 rounded-xl border
-                border-steel bg-graphite p-6">
+              <div className="studio-panel p-6">
                 <h3 className="mb-5 font-display text-lg font-semibold">
                   Generation settings
                 </h3>
@@ -380,6 +443,10 @@ function App() {
                   ))}
                 </div>
 
+                <label className="mt-5 block text-sm font-medium" htmlFor="language">Source language</label>
+                <select id="language" disabled={processing} value={language} onChange={e => setLanguage(e.target.value as SourceLanguage)} className="mt-2 w-full rounded-lg border border-steel bg-carbon p-3 text-sm">
+                  <option value="auto">Auto detect</option><option value="en">English</option><option value="fr">French</option><option value="es">Spanish</option><option value="ar">Arabic</option><option value="de">German</option>
+                </select>
                 <p className="mt-4 text-xs text-muted">
                   Up to 5 clips · 10–60 seconds · 9:16 · Subtitles
                 </p>
@@ -399,6 +466,7 @@ function App() {
                 </button>
               </div>
 
+              </div>
               {/* Statistics */}
               <div className="mt-8 grid gap-4 sm:grid-cols-3">
                 {[
@@ -416,6 +484,8 @@ function App() {
                   </div>
                 ))}
               </div>
+              <div className="mt-10 flex items-center justify-between"><h3 className="font-display text-xl">Recent projects</h3><button className="text-sm text-nardo" onClick={() => setPage('Projects')}>View all →</button></div>
+              <div className="mt-4 space-y-3">{projects.length === 0 && <p className="studio-panel p-6 text-sm text-muted">Your first project will appear here.</p>}{projects.slice(0,3).map(p => <button key={p.result.job_id} onClick={() => {setProjectFilter(p.result.job_id);setSearch('');setPage('My clips')}} className="studio-panel flex w-full items-center gap-4 p-4 text-left"><Film className="shrink-0 text-nardo"/><span className="min-w-0 flex-1"><span className="block truncate">{p.name}</span><span className="text-xs text-muted">{p.result.clips.length} clips · {p.result.transcription.language || 'Auto'}</span></span><ArrowUpRight size={18}/></button>)}</div>
             </motion.div>
           )}
 
@@ -448,11 +518,12 @@ function App() {
                     </div>
 
                     <button
-                      onClick={() => setPage('My clips')}
+                      onClick={() => { setProjectFilter(project.result.job_id); setSearch(''); setPage('My clips') }}
                       aria-label="View clips"
                     >
                       <ArrowUpRight size={20} />
                     </button>
+                    <button className="ml-3 text-muted hover:text-red-300" aria-label="Remove project" onClick={() => removeProject(project.result.job_id)}><Trash2 size={18}/></button>
                   </div>
                 ))}
               </div>
@@ -466,10 +537,12 @@ function App() {
               </h2>
 
               <p className="mb-8 mt-2 text-sm text-muted">
-                {allClips.length} clips generated
+                {visibleClips.length} clips generated
               </p>
+              <select aria-label="Filter by project" value={projectFilter} onChange={e => setProjectFilter(e.target.value)} className="mb-6 w-full max-w-sm rounded-lg border border-steel bg-carbon p-3 text-sm"><option value="all">All projects</option>{projects.map(p => <option key={p.result.job_id} value={p.result.job_id}>{p.name}</option>)}</select>
 
-              {allClips.length === 0 && (
+              <div className="mb-6 flex flex-wrap gap-3"><input aria-label="Search transcripts" placeholder="Search clip transcripts..." value={search} onChange={e=>setSearch(e.target.value)} className="studio-input flex-1"/><select aria-label="Sort clips" value={sort} onChange={e=>setSort(e.target.value)} className="studio-input"><option value="score">Highest score</option><option value="duration">Longest first</option><option value="time">Source order</option></select></div>
+              {visibleClips.length === 0 && (
                 <div className="rounded-xl border border-steel
                   p-16 text-center text-muted">
                   No clips available yet.
@@ -477,7 +550,7 @@ function App() {
               )}
 
               <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
-                {allClips.map(clip => (
+                {visibleClips.map(clip => (
                   <div
                     key={clip.download_url}
                     className="overflow-hidden rounded-xl
@@ -487,7 +560,7 @@ function App() {
                       src={getClipUrl(clip.download_url)}
                       controls
                       preload="metadata"
-                      className="aspect-[9/16] w-full bg-black object-contain"
+                      className="aspect-[9/16] max-h-[420px] w-full bg-black object-contain"
                     />
 
                     <div className="p-4">
@@ -533,7 +606,8 @@ function App() {
       </main>
 
       {/* Clip details */}
-      {selectedClip && (
+      {selectedClip?.editor_url && <Editor key={selectedClip.download_url} clip={selectedClip} onClose={() => setSelectedClip(null)} />}
+      {selectedClip && !selectedClip.editor_url && (
         <div className="fixed inset-0 z-50 flex items-center
           justify-center bg-black/80 p-5 backdrop-blur-sm">
 
@@ -543,7 +617,7 @@ function App() {
 
             <div className="mb-5 flex items-center justify-between">
               <h3 className="font-display text-xl font-semibold">
-                Clip details
+                Clip details (legacy — regenerate to edit)
               </h3>
               <button onClick={() => setSelectedClip(null)}>
                 <X size={20} />

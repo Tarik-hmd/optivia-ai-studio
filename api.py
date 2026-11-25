@@ -136,7 +136,15 @@ async def transcribe_uploaded_audio(file: UploadFile = File(...)):
 
 
 @app.post("/process-video")
-async def process_video(file: UploadFile = File(...), mode: str = Form("keywords")):
+async def process_video(file: UploadFile = File(...), mode: str = Form("keywords"), language: str= Form("auto")):
+
+    if language not in ("auto", "en", "fr", "es", "ar", "de"):
+        await file.close()
+        raise HTTPException(
+            status_code=422,
+            detail="Unsupported language"
+        )
+    
     temp_path = None
     output_dir = None
     if mode not in ("keywords", "ai"):
@@ -205,7 +213,13 @@ async def process_video(file: UploadFile = File(...), mode: str = Form("keywords
                 
 
         # 2. Transcribe video
-        transcription = transcribe_audio(temp_path)
+        transcription = (
+            transcribe_audio(temp_path)
+            if language == "auto"
+            else transcribe_audio(temp_path, language=language)
+            
+
+        )
 
         # 3. Generate time windows
         windows = time_based_windows(
@@ -271,14 +285,15 @@ async def process_video(file: UploadFile = File(...), mode: str = Form("keywords
             exported_clips.append({
                 **clip,
                 "file": final_path,
+                "editor_url": f"/editor/{job_id}/{index}/source",
+                "captions": clip_segments,
+                "clip_index": index,
                 "download_url": (
                     f"/download/{job_id}/{Path(final_path).name}"
                 )
             })
 
             # Clean intermediate files
-            if os.path.exists(vertical_path):
-                os.remove(vertical_path)
 
             if os.path.exists(subtitle_path):
                 os.remove(subtitle_path)
@@ -434,3 +449,7 @@ def get_ai_client():
         return None
 
     return create_llm_client(api_key)
+
+
+from editor_api import router as editor_router
+app.include_router(editor_router)

@@ -1,11 +1,17 @@
-
 import axios from 'axios'
 
 export const API_URL = 'http://127.0.0.1:8000'
 
+export type SourceLanguage = 'auto' | 'en' | 'fr' | 'es' | 'ar' | 'de'
+
 export type ProcessingMode = 'keywords' | 'ai'
 
+export interface Caption { start: number; end: number; text: string }
+
 export interface Clip {
+  editor_url?: string
+  clip_index?: number
+  captions?: Caption[]
   text: string
   start: number
   end: number
@@ -37,12 +43,14 @@ export async function checkHealth(): Promise<boolean> {
 
 export async function processVideo(
   file: File,
-  mode: ProcessingMode
+  mode: ProcessingMode,
+  language: SourceLanguage = 'auto'
 ): Promise<ProcessingResult> {
   const formData = new FormData()
 
   formData.append('file', file)
   formData.append('mode', mode)
+  formData.append('language', language)
 
   const response = await axios.post<ProcessingResult>(
     `${API_URL}/process-video`,

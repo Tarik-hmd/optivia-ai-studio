@@ -9,10 +9,10 @@ model = WhisperModel(
 )
 
 
-def transcribe_audio(file_path):
+def transcribe_audio(file_path, language=None):
     segments, info = model.transcribe(
         file_path,
-        language=None,
+        language=language,
         task="transcribe",
         beam_size=5,
         vad_filter=True,
